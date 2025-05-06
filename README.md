@@ -1,1 +1,3 @@
 # Chest-Pain-Evaluator
+
+This is an experimental probability estimator for chest pain diagnoses in patients presenting to the Emergency Department. It estimates the probability of 3 different life threatening causes of chest pain, namely acute myocardial infarction, pulmonary embolism, and aortic dissection. It draws upon what is available in terms of likelihood ratios to adopt a Bayesian approach to estimating the pre-test probability of one or more of the diseases. It is not meant as a definitive probability estimator but is aimed at being an educational tool. It is in a very pre-alpha stage at the time of writing this readme and should not be taken as healthcare advice!
