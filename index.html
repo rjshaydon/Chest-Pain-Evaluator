@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bayesian Chest Pain Evaluator</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2rem 1rem 1rem;
+      /* Align content to the left */
+      text-align: left;
+    }
+    h1 {
+      /* Ensure title aligns left */
+      text-align: left;
+      display: inline-block; /* Allow scale indicator to sit next to it */
+      margin-right: 10px; /* Add some space between title and indicator */
+    }
+    .scale-indicator {
+      /* Adjusted styling for placement next to title */
+      display: inline-block;
+      font-size: 0.9em; /* Smaller font */
+      font-style: italic; /* Italicized text */
+      padding: 0; /* Remove padding */
+      background: none; /* Remove background */
+      border: none; /* Remove border */
+      position: static; /* Remove absolute positioning */
+      vertical-align: middle; /* Align vertically with the title */
+    }
+    .chart {
+      width: 100%; /* Use full width available */
+      height: calc(60vh - 6rem);    /* Reduced to 60% of viewport height */
+      margin: 1rem 0; /* Adjust margin for left alignment */
+      display: flex;
+      align-items: flex-end;        /* bars grow from the bottom */
+      gap: 1rem;
+      padding: 0.5rem 0.5rem 1.5rem;
+      box-sizing: border-box;
+      border-left: 1px solid #ccc;
+      border-bottom: 1px solid #ccc;
+      position: relative;
+    }
+    .bar-container {
+      flex: 1;
+      text-align: center;
+      position: relative;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+    .bar-label {
+      position: absolute;
+      /* Position label just above the bar */
+      bottom: 100%; /* Position at the top of the bar's container */
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-weight: bold;
+      background-color: rgba(255, 255, 255, 0.8);
+      padding: 2px;
+      border-radius: 3px;
+      z-index: 2;
+      /* Add a little space between the label and the bar */
+      margin-bottom: 5px;
+    }
+    .bar {
+      width: 100%;
+      background: steelblue;
+      transition: height 0.8s ease, background-color 0.8s ease;
+      position: relative;
+      min-height: 2px; /* Ensure visibility of tiny bars */
+    }
+    .bar-other {
+      background: #aaa;
+    }
+    .bar-name {
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+
+    .controls {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      /* Ensure controls take full width and align with chart */
+      width: 100%;
+      justify-content: flex-start; /* Align control items to the start */
+      flex-wrap: wrap; /* Allow controls to wrap on smaller screens */
+    }
+     .controls > div {
+        /* Ensure individual select containers don't force wrapping unless needed */
+        flex-shrink: 0;
+     }
+    select { min-width: 200px; }
+    .selected-list {
+      margin-bottom: 2rem;
+      /* Ensure selected list aligns with chart and controls */
+      width: 100%;
+    }
+    .selected-list span { display: inline-block; background: #eee; padding: 0.25rem 0.5rem; margin: 0.25rem; border-radius: 4px; }
+    .selected-list button { background: transparent; border: none; font-weight: bold; margin-left: 0.5rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Bayesian Chest Pain Evaluator</h1>
+  <div id="scale-mode" class="scale-indicator">Log-Odds Scale</div>
+    <div class="chart">
+      <div class="bar-container">
+        <div id="label-acs" class="bar-label">0.0%</div>
+        <div id="bar-acs" class="bar"></div>
+        <div class="bar-name">ACS</div>
+      </div>
+      <div class="bar-container">
+        <div id="label-pe" class="bar-label">0.0%</div>
+        <div id="bar-pe" class="bar"></div>
+        <div class="bar-name">PE</div>
+      </div>
+      <div class="bar-container">
+        <div id="label-ad" class="bar-label">0.0%</div>
+        <div id="bar-ad" class="bar"></div>
+        <div class="bar-name">AD</div>
+      </div>
+      <div class="bar-container">
+        <div id="label-other" class="bar-label">0.0%</div>
+        <div id="bar-other" class="bar bar-other"></div>
+        <div class="bar-name">Other</div>
+      </div>
+    </div>
+  <div class="controls">
+    <div>
+      <label>History Findings:</label><br>
+      <select id="sel-history"><option value="">-- select --</option></select>
+    </div>
+    <div>
+      <label>Exam Findings:</label><br>
+      <select id="sel-exam"><option value="">-- select --</option></select>
+    </div>
+    <div>
+      <label>Risk Factors:</label><br>
+      <select id="sel-risk"><option value="">-- select --</option></select>
+    </div>
+  </div>
+  <div class="selected-list" id="selected-list"></div>
+  <script>
+    // Data
+    const baseRates = { acs: 0.03, pe: 0.005, ad: 0.0001 };
+    const lrData = {
+      'tearing chest pain':      { acs:1, pe:1, ad:10.8 },
+      'migrating pain':          { acs:1, pe:1, ad:7.6 },
+      'sudden onset chest pain': { acs:1.1, pe:1, ad:7.6 },
+      'pain to left arm':        { acs:1.3, pe:1, ad:1 },
+      'pain to right arm':       { acs:1.3, pe:1, ad:1 },
+      'pain to both arms':       { acs:2.6, pe:1, ad:1 },
+      'pain radiating to jaw':   { acs:1.5, pe:1, ad:1 },
+      'worse on exertion':       { acs:1.8, pe:1, ad:1 },
+      'pleuritic chest pain':    { acs:0.2, pe:1.9, ad:0.3 },
+      'palpation reproducible':  { acs:0.3, pe:0.83, ad:1 },
+      'diaphoresis':             { acs:1.35, pe:1, ad:1 },
+      'tachypnoea':              { acs:1.9, pe:1.34, ad:1 },
+      'tachycardia':             { acs:1.3, pe:1.33, ad:1 },
+      'neurological deficit':    { acs:1, pe:1, ad:6 },
+      'pulse deficit':           { acs:1, pe:1, ad:5.7 },
+      'syncope':                 { acs:0.55, pe:2.38, ad:2.6 },
+      'dyspnoea':                { acs:1.2, pe:1.42, ad:1 },
+      'haemoptysis':             { acs:1, pe:1.62, ad:1 },
+      'current DVT':             { acs:1, pe:2.05, ad:1 },
+      'male sex':                { acs:1.3, pe:1, ad:1 },
+      'hypertension':            { acs:1.2, pe:1, ad:1 },
+      'diabetes':                { acs:1.4, pe:1, ad:1 },
+      'prior MI':                { acs:1.6, pe:1, ad:1 },
+      'active cancer':           { acs:1, pe:1.74, ad:1 }
+    };
+    const categories = {
+      history: ['tearing chest pain','migrating pain','sudden onset chest pain','pain to left arm','pain to right arm','pain to both arms','pain radiating to jaw','worse on exertion','pleuritic chest pain'],
+      exam: ['palpation reproducible','diaphoresis','tachypnoea','tachycardia','neurological deficit','pulse deficit'],
+      risk: ['syncope','dyspnoea','haemoptysis','current DVT','male sex','hypertension','diabetes','prior MI','active cancer']
+    };
+    const descriptorCategory = {};
+    Object.entries(categories).forEach(([cat,list])=>list.forEach(item=>descriptorCategory[item]=cat));
+    let selected=[];
+
+    function populate(id){
+      const sel=document.getElementById(id);
+      sel.querySelectorAll('option[value]:not([value=""])').forEach(o=>o.remove());
+      categories[id.split('-')[1]].forEach(item=>{
+        if(!selected.includes(item)){
+          const opt=document.createElement('option');
+          opt.value=item;opt.textContent=item;sel.append(opt);
+        }
+      });
+    }
+    ['sel-history','sel-exam','sel-risk'].forEach(populate);
+
+    function add(cat,val){if(val&&!selected.includes(val)){selected.push(val);render();calc();['sel-history','sel-exam','sel-risk'].forEach(populate);}}
+    function remove(val){selected=selected.filter(x=>x!==val);render();calc();['sel-history','sel-exam','sel-risk'].forEach(populate);}
+
+    function render(){
+      const c=document.getElementById('selected-list');c.innerHTML='';
+      selected.forEach(f=>{
+        const span=document.createElement('span');span.textContent=f;
+        const btn=document.createElement('button');btn.textContent='×';btn.onclick=()=>remove(f);
+        span.append(btn);c.append(span);
+      });
+    }
+
+    // Format a probability p (0–1) as a percentage with variable precision
+    function formatPercent(p) {
+      const pct = p * 100;
+      let decimals;
+      if (pct < 0.01) {
+        decimals = 3;
+      } else if (pct < 0.1) {
+        decimals = 2;
+      } else {
+        decimals = 1;
+      }
+      return pct.toFixed(decimals) + '%';
+    }
+
+    function calc(){
+      // Calculate odds and probabilities
+      const odds = {
+        acs: baseRates.acs/(1-baseRates.acs),
+        pe: baseRates.pe/(1-baseRates.pe),
+        ad: baseRates.ad/(1-baseRates.ad)
+      };
+
+      // Apply likelihood ratios for selected findings
+      selected.forEach(f => {
+        const lr = lrData[f] || {acs:1, pe:1, ad:1};
+        odds.acs *= lr.acs;
+        odds.pe *= lr.pe;
+        odds.ad *= lr.ad;
+      });
+
+      // Convert back to probabilities
+      const p = {
+        acs: odds.acs/(1+odds.acs),
+        pe: odds.pe/(1+odds.pe),
+        ad: odds.ad/(1+odds.ad)
+      };
+
+      const sum = p.acs + p.pe + p.ad;
+      p.other = Math.max(0, 1-sum);
+
+      // Calculate log-odds for scaling the bars
+      const logOdds = {
+        acs: Math.log(odds.acs),
+        pe: Math.log(odds.pe),
+        ad: Math.log(odds.ad),
+        other: Math.log(p.other / (1 - p.other)) // Note: log(0) is -Infinity, handle this if needed for display
+      };
+
+      // Handle cases where probability is 0 or 1 for log-odds calculation
+       if (p.acs === 0) logOdds.acs = -Infinity;
+       if (p.acs === 1) logOdds.acs = Infinity;
+       if (p.pe === 0) logOdds.pe = -Infinity;
+       if (p.pe === 1) logOdds.pe = Infinity;
+       if (p.ad === 0) logOdds.ad = -Infinity;
+       if (p.ad === 1) logOdds.ad = Infinity;
+       if (p.other === 0) logOdds.other = -Infinity;
+       if (p.other === 1) logOdds.other = Infinity;
+
+
+      // Update probability labels
+      document.getElementById('label-acs').textContent = formatPercent(p.acs);
+      document.getElementById('label-pe').textContent = formatPercent(p.pe);
+      document.getElementById('label-ad').textContent = formatPercent(p.ad);
+      document.getElementById('label-other').textContent = formatPercent(p.other);
+
+      // Check if probabilities are within a reasonable range for direct probability scaling
+      // New criteria: rescale to probabilities if any 2 out of 4 bars are between 10% and 90%
+      const minProbThreshold = 0.25; // 25%
+      const maxProbThreshold = 0.75; // 75%
+
+      const allProbs = [p.acs, p.pe, p.ad, p.other];
+
+      // Count how many probabilities are within the 10% to 90% range
+      const withinRangeCount = allProbs.filter(prob => prob >= minProbThreshold && prob <= maxProbThreshold).length;
+
+      // Decide on scaling method: use direct probability if at least 2 out of 4 are within range
+      let useDirectProbability = withinRangeCount >= 2;
+
+      // Set scale indicator text
+      document.getElementById('scale-mode').textContent = useDirectProbability
+        ? '– Direct Probability Scale'
+        : '– Log-Odds Scale';
+
+      if (useDirectProbability) {
+        // Use direct probability scaling
+        const maxHeight = 90; // Maximum height percentage (leaving space for labels)
+
+        // Find the maximum probability among the four to scale relative to it
+        const maxProb = Math.max(...allProbs);
+        // Scale factor to make the largest bar reach up to maxHeight, avoid division by zero
+        const scaleFactor = maxProb > 0 ? maxHeight / maxProb : 0;
+
+        // Set bar heights based on probabilities directly, scaled to use max height
+        document.getElementById('bar-acs').style.height = (p.acs * scaleFactor) + '%';
+        document.getElementById('bar-pe').style.height = (p.pe * scaleFactor) + '%';
+        document.getElementById('bar-ad').style.height = (p.ad * scaleFactor) + '%';
+        document.getElementById('bar-other').style.height = (p.other * scaleFactor) + '%';
+
+        // Change bar colors for direct probability mode
+        document.getElementById('bar-acs').style.backgroundColor = '#4285F4';
+        document.getElementById('bar-pe').style.backgroundColor = '#0F9D58';
+        document.getElementById('bar-ad').style.backgroundColor = '#DB4437';
+        document.getElementById('bar-other').style.backgroundColor = '#888';
+      } else {
+        // Use log-odds scaling when probabilities are outside the "reasonable" range
+
+        // Filter out infinite log-odds values to find min/max for scaling finite bars
+        const finiteLogOdds = Object.values(logOdds).filter(lo => Number.isFinite(lo));
+
+        let minLogOdds = finiteLogOdds.length > 0 ? Math.min(...finiteLogOdds) : -10; // Default if all are infinite
+        let maxLogOdds = finiteLogOdds.length > 0 ? Math.max(...finiteLogOdds) : 10; // Default if all are infinite
+
+         // Adjust min/max to ensure a reasonable range for scaling if all are clustered
+         if (minLogOdds === maxLogOdds) {
+             minLogOdds -= 1;
+             maxLogOdds += 1;
+         }
+
+
+        // Add |minLogOdds| to shift all finite values to positive relative scale
+        const shift = Math.abs(minLogOdds); // Shift based on the actual minimum finite log-odd
+
+        // Calculate maximum height (reserving space for labels)
+        const maxBarHeight = 90; // Maximum percentage height for bars
+
+        // Calculate the scale factor to normalize heights based on the range of finite log-odds
+        const range = (maxLogOdds + shift); // The total range after shifting minLogOdds to 0
+
+        const scale = range > 0 ? maxBarHeight / range : 0;
+
+
+        // 6. Calculate and set bar heights using the adjusted log-odds and scale
+        function setBarHeight(id, value, originalColor) {
+            let height;
+            if (!Number.isFinite(value)) {
+                // Handle infinite values - cap at max height or min height
+                height = value === Infinity ? maxBarHeight : 2;
+            } else {
+                 // Scale finite log-odds
+                 height = (value + shift) * scale;
+                 // Ensure minimum 2px height for visibility and cap at maxBarHeight
+                 height = Math.max(2, Math.min(maxBarHeight, height));
+            }
+
+            const element = document.getElementById(id);
+            element.style.height = height + '%';
+            element.style.backgroundColor = originalColor;
+        }
+
+        setBarHeight('bar-acs', logOdds.acs, 'steelblue');
+        setBarHeight('bar-pe', logOdds.pe, 'steelblue');
+        setBarHeight('bar-ad', logOdds.ad, 'steelblue');
+        setBarHeight('bar-other', logOdds.other, '#aaa');
+      }
+    }
+
+    document.getElementById('sel-history').onchange=e=>{add('history',e.target.value);e.target.value='';};
+    document.getElementById('sel-exam').onchange=e=>{add('exam',e.target.value);e.target.value='';};
+    document.getElementById('sel-risk').onchange=e=>{add('risk',e.target.value);e.target.value='';};
+
+    calc(); render();
+  </script>
+</body>
+</html>
